@@ -82,7 +82,10 @@ if [ "$CONNECT_TO_TESTNET" = "True" ]; then
     echo "Please login to create an Ethereum Server Wallet"
     cd modal-login
     # Check if the yarn command exists; if not, install Yarn.
+    # Temporarily disable strict error checking when sourcing .bashrc
+    set +eu
     source ~/.bashrc
+    set -eu
 
     # Node.js + NVM setup
     if ! command -v node >/dev/null 2>&1; then
@@ -118,7 +121,16 @@ if [ "$CONNECT_TO_TESTNET" = "True" ]; then
     SERVER_PID=$!  # Store the process ID
     echo "Started server process: $SERVER_PID"
     sleep 5
-    open http://localhost:3000
+    # Try different browser open commands based on the system
+    if command -v xdg-open > /dev/null 2>&1; then
+        xdg-open http://localhost:3000
+    elif command -v gnome-open > /dev/null 2>&1; then
+        gnome-open http://localhost:3000
+    elif command -v sensible-browser > /dev/null 2>&1; then
+        sensible-browser http://localhost:3000
+    else
+        echo "Could not automatically open browser. Please open http://localhost:3000 manually in your browser."
+    fi
     cd ..
 
     echo_green ">> Waiting for modal userData.json to be created..."
@@ -151,6 +163,10 @@ pip_install() {
 echo_green ">> Getting requirements..."
 pip_install "$ROOT"/requirements-hivemind.txt
 pip_install "$ROOT"/requirements.txt
+
+# Install the correct jinja2 version needed for chat templates
+echo_green ">> Installing additional dependencies..."
+pip install -q --disable-pip-version-check "jinja2>=3.1.0"
 
 if ! command -v nvidia-smi &> /dev/null; then
     # You don't have a NVIDIA GPU
@@ -186,13 +202,33 @@ echo_blue ">> Post about rl-swarm on X/twitter! --> https://tinyurl.com/swarmtwe
 echo_blue ">> And remember to star the repo on GitHub! --> https://github.com/gensyn-ai/rl-swarm"
 
 if [ -n "$ORG_ID" ]; then
-    python -m hivemind_exp.gsm8k.train_single_gpu \
+    # Try different Python command variants
+    PYTHON_CMD="python3"
+    if ! command -v $PYTHON_CMD > /dev/null 2>&1; then
+        PYTHON_CMD="python"
+        if ! command -v $PYTHON_CMD > /dev/null 2>&1; then
+            echo "Error: Neither python3 nor python commands were found. Please install Python."
+            exit 1
+        fi
+    fi
+    
+    $PYTHON_CMD -m hivemind_exp.gsm8k.train_single_gpu \
         --hf_token "$HUGGINGFACE_ACCESS_TOKEN" \
         --identity_path "$IDENTITY_PATH" \
         --modal_org_id "$ORG_ID" \
         --config "$CONFIG_PATH"
 else
-    python -m hivemind_exp.gsm8k.train_single_gpu \
+    # Try different Python command variants
+    PYTHON_CMD="python3"
+    if ! command -v $PYTHON_CMD > /dev/null 2>&1; then
+        PYTHON_CMD="python"
+        if ! command -v $PYTHON_CMD > /dev/null 2>&1; then
+            echo "Error: Neither python3 nor python commands were found. Please install Python."
+            exit 1
+        fi
+    fi
+    
+    $PYTHON_CMD -m hivemind_exp.gsm8k.train_single_gpu \
         --hf_token "$HUGGINGFACE_ACCESS_TOKEN" \
         --identity_path "$IDENTITY_PATH" \
         --public_maddr "$PUB_MULTI_ADDRS" \
