@@ -56,3 +56,5 @@ screen
 ```
 
 > ✅ Press `Y` when prompted.
+>
+> if you already have swarm.pem and login data inside (stored) then you can chose 1-3 whatever it automated loaded to swarm, no need login ( already restored )
