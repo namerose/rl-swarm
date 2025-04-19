@@ -60,4 +60,4 @@ screen
 > if you already have swarm.pem and login data inside (stored) then you can chose 1-3 whatever it automated loaded to swarm, no need login ( already restored )
 >
 > 
-> FOR Quickpod Server sometimes when installing node it's get stuck at 6 or something with manual setup, so if you already wait like 10-30 second just ( CTRL+C ) and rerun ./run_rl_swarm.sh ( inside venv )
+> FOR Quickpod Server sometimes when installing node it's get stuck at 6 or something with manual setup, so if you already wait like 10-30 second just ( CTRL+C ) and rerun ./run_rl_swarm.sh ( inside venv ) it's fine to rerun because it's not using GPU or not training only on NODE!
