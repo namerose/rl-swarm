@@ -5,6 +5,10 @@ set -euo pipefail
 # General arguments
 ROOT=$PWD
 
+# Default port for modal-login server, can be changed by setting the PORT environment variable
+DEFAULT_PORT=3000
+PORT=${PORT:-$DEFAULT_PORT}
+
 export PUB_MULTI_ADDRS
 export PEER_MULTI_ADDRS
 export HOST_MULTI_ADDRS
@@ -57,6 +61,17 @@ cleanup() {
     # Remove modal credentials if they exist
     rm -r $ROOT_DIR/modal-login/temp-data/*.json 2> /dev/null || true
 
+    # Explicitly kill ngrok and cloudflared if they exist
+    if [ -n "${NGROK_PID:-}" ]; then
+        kill $NGROK_PID 2> /dev/null || true
+        echo "Stopped ngrok tunnel"
+    fi
+    
+    if [ -n "${CLOUDFLARED_PID:-}" ]; then
+        kill $CLOUDFLARED_PID 2> /dev/null || true
+        echo "Stopped cloudflare tunnel"
+    fi
+    
     # Kill all processes belonging to this script's process group
     kill -- -$$ || true
 
@@ -64,18 +79,6 @@ cleanup() {
 }
 
 trap cleanup EXIT
-
-echo -e "\033[38;5;224m"
-cat << "EOF"
-    ██████  ██            ███████ ██     ██  █████  ██████  ███    ███ 
-    ██   ██ ██            ██      ██     ██ ██   ██ ██   ██ ████  ████ 
-    ██████  ██      █████ ███████ ██  █  ██ ███████ ██████  ██ ████ ██ 
-    ██   ██ ██                 ██ ██ ███ ██ ██   ██ ██   ██ ██  ██  ██ 
-    ██   ██ ███████       ███████  ███ ███  ██   ██ ██   ██ ██      ██ 
-    
-    From Gensyn  
-                                                                
-EOF
 
 while true; do
     echo -en $GREEN_TEXT
@@ -94,7 +97,10 @@ if [ "$CONNECT_TO_TESTNET" = "True" ]; then
     echo "Please login to create an Ethereum Server Wallet"
     cd modal-login
     # Check if the yarn command exists; if not, install Yarn.
+    # Temporarily disable strict error checking when sourcing .bashrc
+    set +eu
     source ~/.bashrc
+    set -eu
 
     # Node.js + NVM setup
     if ! command -v node >/dev/null 2>&1; then
@@ -124,6 +130,11 @@ if [ "$CONNECT_TO_TESTNET" = "True" ]; then
             source ~/.bashrc
         fi
     fi
+    
+    # Set custom port for Next.js server
+    echo "Using port $PORT for modal login server"
+    export PORT
+    
     yarn install
     yarn dev > /dev/null 2>&1 & # Run in background and suppress output
 
@@ -131,13 +142,96 @@ if [ "$CONNECT_TO_TESTNET" = "True" ]; then
     echo "Started server process: $SERVER_PID"
     sleep 5
     
-    # Try to open the URL in the default browser
-    if open http://localhost:3000 2>/dev/null; then
-        echo_green ">> Successfully opened http://localhost:3000 in your default browser."
-    else
-        echo ">> Failed to open http://localhost:3000. Please open it manually."
-    fi
+    # Ask user which public tunnel service to use
+    echo -en $GREEN_TEXT
+    echo ">> How would you like to access the login server?"
+    echo "1) Localhost (default)"
+    echo "2) Ngrok tunnel"
+    echo "3) Cloudflare tunnel"
+    read -p "Enter choice [1-3]: " tunnel_choice
+    echo -en $RESET_TEXT
+    tunnel_choice=${tunnel_choice:-1}  # Default to 1 if the user presses Enter
     
+    case $tunnel_choice in
+        1)  
+            LOGIN_URL="http://localhost:$PORT"
+            ;;
+        2)  
+            if ! command -v ngrok &> /dev/null; then
+                echo "ngrok not found. Installing ngrok..."
+                curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+                echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list >/dev/null
+                sudo apt update && sudo apt install -y ngrok
+            fi
+            
+            # Run ngrok to create a tunnel
+            echo "Starting ngrok tunnel to port $PORT..."
+            ngrok http $PORT > /dev/null 2>&1 &
+            NGROK_PID=$!
+            
+            # Wait for ngrok to start and get the public URL
+            sleep 5
+            NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"[^"]*' | grep -o 'http[^"]*')
+            
+            if [ -n "$NGROK_URL" ]; then
+                LOGIN_URL="$NGROK_URL"
+                echo "ngrok tunnel created!"
+            else
+                echo "Failed to create ngrok tunnel. Using localhost URL."
+                LOGIN_URL="http://localhost:$PORT"
+            fi
+            ;;
+        3)  
+            if ! command -v cloudflared &> /dev/null; then
+                echo "cloudflared not found. Installing cloudflared..."
+                curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+                sudo dpkg -i cloudflared.deb
+                rm cloudflared.deb
+            fi
+            
+            # Run cloudflared to create a tunnel
+            echo "Starting cloudflare tunnel to port $PORT..."
+            TUNNEL_LOGFILE="cloudflared.log"
+            cloudflared tunnel --url "http://localhost:$PORT" > "$TUNNEL_LOGFILE" 2>&1 &
+            CLOUDFLARED_PID=$!
+            
+            # Wait for cloudflared to start and get the public URL
+            sleep 5
+            
+            # Extract URL from logfile (e.g., "https://chair-polyester-principle-initially.trycloudflare.com")
+            CLOUDFLARE_URL=$(grep -o 'https://[^ ]*\.trycloudflare\.com' "$TUNNEL_LOGFILE" | head -1)
+            
+            if [ -n "$CLOUDFLARE_URL" ]; then
+                LOGIN_URL="$CLOUDFLARE_URL"
+                echo "Cloudflare tunnel created!"
+            else
+                echo "Failed to create Cloudflare tunnel. Using localhost URL."
+                LOGIN_URL="http://localhost:$PORT"
+            fi
+            ;;
+        *)  
+            echo "Invalid choice. Using localhost."
+            LOGIN_URL="http://localhost:$PORT"
+            ;;
+    esac
+    
+    echo ""
+    echo "====================================================================="
+    echo -e "${GREEN_TEXT}>> Please open this URL in your browser to login: ${LOGIN_URL}${RESET_TEXT}"
+    echo "====================================================================="
+    echo ""
+    
+    # Try different browser open commands, but don't worry if they fail
+    if [ -n "${BROWSER:-}" ]; then
+        # Try to use BROWSER env var if set
+        $BROWSER "$LOGIN_URL" > /dev/null 2>&1 || true
+    elif command -v xdg-open > /dev/null 2>&1; then
+        xdg-open "$LOGIN_URL" > /dev/null 2>&1 || true
+    elif command -v gnome-open > /dev/null 2>&1; then
+        gnome-open "$LOGIN_URL" > /dev/null 2>&1 || true
+    elif command -v sensible-browser > /dev/null 2>&1; then
+        sensible-browser "$LOGIN_URL" > /dev/null 2>&1 || true
+    fi
     cd ..
 
     echo_green ">> Waiting for modal userData.json to be created..."
@@ -152,7 +246,7 @@ if [ "$CONNECT_TO_TESTNET" = "True" ]; then
     # Wait until the API key is activated by the client
     echo "Waiting for API key to become activated..."
     while true; do
-        STATUS=$(curl -s "http://localhost:3000/api/get-api-key-status?orgId=$ORG_ID")
+        STATUS=$(curl -s "http://localhost:$PORT/api/get-api-key-status?orgId=$ORG_ID")
         if [[ "$STATUS" == "activated" ]]; then
             echo "API key is activated! Proceeding..."
             break
@@ -170,6 +264,10 @@ pip_install() {
 echo_green ">> Getting requirements..."
 pip_install "$ROOT"/requirements-hivemind.txt
 pip_install "$ROOT"/requirements.txt
+
+# Install the correct jinja2 version needed for chat templates
+echo_green ">> Installing additional dependencies..."
+pip install -q --disable-pip-version-check "jinja2>=3.1.0"
 
 if ! command -v nvidia-smi &> /dev/null; then
     # You don't have a NVIDIA GPU
@@ -205,13 +303,33 @@ echo_blue ">> Post about rl-swarm on X/twitter! --> https://tinyurl.com/swarmtwe
 echo_blue ">> And remember to star the repo on GitHub! --> https://github.com/gensyn-ai/rl-swarm"
 
 if [ -n "$ORG_ID" ]; then
-    python -m hivemind_exp.gsm8k.train_single_gpu \
+    # Try different Python command variants
+    PYTHON_CMD="python3"
+    if ! command -v $PYTHON_CMD > /dev/null 2>&1; then
+        PYTHON_CMD="python"
+        if ! command -v $PYTHON_CMD > /dev/null 2>&1; then
+            echo "Error: Neither python3 nor python commands were found. Please install Python."
+            exit 1
+        fi
+    fi
+    
+    $PYTHON_CMD -m hivemind_exp.gsm8k.train_single_gpu \
         --hf_token "$HUGGINGFACE_ACCESS_TOKEN" \
         --identity_path "$IDENTITY_PATH" \
         --modal_org_id "$ORG_ID" \
         --config "$CONFIG_PATH"
 else
-    python -m hivemind_exp.gsm8k.train_single_gpu \
+    # Try different Python command variants
+    PYTHON_CMD="python3"
+    if ! command -v $PYTHON_CMD > /dev/null 2>&1; then
+        PYTHON_CMD="python"
+        if ! command -v $PYTHON_CMD > /dev/null 2>&1; then
+            echo "Error: Neither python3 nor python commands were found. Please install Python."
+            exit 1
+        fi
+    fi
+    
+    $PYTHON_CMD -m hivemind_exp.gsm8k.train_single_gpu \
         --hf_token "$HUGGINGFACE_ACCESS_TOKEN" \
         --identity_path "$IDENTITY_PATH" \
         --public_maddr "$PUB_MULTI_ADDRS" \
