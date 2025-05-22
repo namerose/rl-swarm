@@ -6,7 +6,7 @@ import psutil
 import torch
 from trl import GRPOConfig
 
-DEFAULT_MEMORY_FRACTION = 0.95
+DEFAULT_MEMORY_FRACTION = 0.91
 
 
 def get_cuda_free_memory(device, memory_fraction=DEFAULT_MEMORY_FRACTION):
