@@ -544,21 +544,44 @@ fi
 mkdir -p "$ROOT/logs"
 
 if [ "$CONNECT_TO_TESTNET" = true ]; then
-    # Select tunneling option
-    echo -en $GREEN_TEXT
-    echo ">> Select tunneling option for login server:"
-    echo "   1) Local (default - http://localhost:3000)"
-    echo "   2) Cloudflare Tunnel"
-    echo "   3) Ngrok"
-    echo "   4) Localtunnel"
-    read -p ">> Enter option [1-4]: " tunnel_option
-    echo -en $RESET_TEXT
-    tunnel_option=${tunnel_option:-1}  # Default to option 1 if the user presses Enter
+    # Check if user is already logged in
+    IDENTITY_EXISTS=false
+    USER_DATA_EXISTS=false
     
-    # Run modal_login server.
-    echo "Please login to create an Ethereum Server Wallet"
-    cd modal-login
-    # Check if the yarn command exists; if not, install Yarn.
+    # Check if identity file exists
+    if [[ -f "$IDENTITY_PATH" ]]; then
+        IDENTITY_EXISTS=true
+        echo_green ">> Found existing identity file: $IDENTITY_PATH"
+    fi
+    
+    # Check if user data exists
+    if [[ -d "$ROOT/modal-login/temp-data" ]] && [[ -f "$ROOT/modal-login/temp-data/userData.json" ]]; then
+        USER_DATA_EXISTS=true
+        echo_green ">> Found existing user data"
+        # Extract ORG_ID from the existing userData.json file
+        ORG_ID=$(awk 'BEGIN { FS = "\"" } !/^[ \t]*[{}]/ { print $(NF - 1); exit }' "$ROOT/modal-login/temp-data/userData.json")
+        echo "   Your ORG_ID is set to: $ORG_ID"
+    fi
+    
+    # If both identity and user data exist, skip login process
+    if [ "$IDENTITY_EXISTS" = true ] && [ "$USER_DATA_EXISTS" = true ]; then
+        echo_green ">> Using existing login credentials"
+    else
+        # Select tunneling option
+        echo -en $GREEN_TEXT
+        echo ">> Select tunneling option for login server:"
+        echo "   1) Local (default - http://localhost:3000)"
+        echo "   2) Cloudflare Tunnel"
+        echo "   3) Ngrok"
+        echo "   4) Localtunnel"
+        read -p ">> Enter option [1-4]: " tunnel_option
+        echo -en $RESET_TEXT
+        tunnel_option=${tunnel_option:-1}  # Default to option 1 if the user presses Enter
+        
+        # Run modal_login server.
+        echo "Please login to create an Ethereum Server Wallet"
+        cd modal-login
+        # Check if the yarn command exists; if not, install Yarn.
 
     # Node.js + NVM setup
     if ! command -v node > /dev/null 2>&1; then
@@ -762,10 +785,17 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
         fi
     done
     
-    # Kill the tunnel process if it exists
-    if [ ! -z "$TUNNEL_PID" ]; then
-        kill $TUNNEL_PID 2>/dev/null || true
-        echo "Tunnel process terminated."
+        # Kill the tunnel process if it exists
+        if [ ! -z "$TUNNEL_PID" ]; then
+            kill $TUNNEL_PID 2>/dev/null || true
+            echo "Tunnel process terminated."
+        fi
+        
+        # Kill the server process if it exists
+        if [ ! -z "$SERVER_PID" ]; then
+            kill $SERVER_PID 2>/dev/null || true
+            echo "Server process terminated."
+        fi
     fi
 fi
 
