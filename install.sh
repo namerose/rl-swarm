@@ -28,9 +28,46 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 echo -e "${GREEN}${BOLD}[✓] Node.js $(node -v) and npm $(npm -v) installed successfully${NC}"
 
-# Find and install CUDA using the cuda.sh script
-echo -e "${CYAN}${BOLD}[✓] Installing CUDA...${NC}"
-# First, look for cuda.sh in the same directory as install.sh
+# Setup compiler tools based on OS
+echo -e "${CYAN}${BOLD}[✓] Setting up compiler tools...${NC}"
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+  if command -v apt &>/dev/null; then
+    echo -e "${CYAN}${BOLD}[✓] Debian/Ubuntu detected. Installing build-essential, gcc, g++...${NC}"
+    sudo apt update > /dev/null 2>&1
+    sudo apt install -y build-essential gcc g++ > /dev/null 2>&1
+
+  elif command -v yum &>/dev/null; then
+    echo -e "${CYAN}${BOLD}[✓] RHEL/CentOS detected. Installing Development Tools...${NC}"
+    sudo yum groupinstall -y "Development Tools" > /dev/null 2>&1
+    sudo yum install -y gcc gcc-c++ > /dev/null 2>&1
+
+  elif command -v pacman &>/dev/null; then
+    echo -e "${CYAN}${BOLD}[✓] Arch Linux detected. Installing base-devel...${NC}"
+    sudo pacman -Sy --noconfirm base-devel gcc > /dev/null 2>&1
+
+  else
+    echo -e "${YELLOW}${BOLD}[!] Linux detected but unsupported package manager.${NC}"
+  fi
+
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+  echo -e "${CYAN}${BOLD}[✓] macOS detected. Installing Xcode Command Line Tools...${NC}"
+  xcode-select --install > /dev/null 2>&1
+
+else
+  echo -e "${YELLOW}${BOLD}[!] Unsupported OS: $OSTYPE. Continuing anyway...${NC}"
+fi
+
+if command -v gcc &>/dev/null; then
+  export CC=$(command -v gcc)
+  echo -e "${CYAN}${BOLD}[✓] Exported CC=$CC${NC}"
+else
+  echo -e "${YELLOW}${BOLD}[!] gcc not found. CUDA installation may fail.${NC}"
+fi
+
+# Install CUDA
+echo -e "${CYAN}${BOLD}[✓] Installing CUDA using local cuda.sh...${NC}"
+
+# Find cuda.sh in standard locations
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CUDA_SCRIPT="$SCRIPT_DIR/cuda.sh"
 
@@ -51,19 +88,25 @@ if [ -f "$CUDA_SCRIPT" ]; then
     echo -e "${GREEN}${BOLD}[✓] Found CUDA script at: $CUDA_SCRIPT${NC}"
     
     # Fix Windows line endings (CRLF to LF)
-    echo -e "${CYAN}${BOLD}[✓] Fixing line endings in CUDA script...${NC}"
-    if command -v dos2unix >/dev/null 2>&1; then
-        sudo dos2unix "$CUDA_SCRIPT"
-    else
-        echo -e "${YELLOW}${BOLD}[!] dos2unix not found, using sed to fix line endings...${NC}"
-        sudo apt-get install -y dos2unix >/dev/null 2>&1 || sudo sed -i 's/\r$//' "$CUDA_SCRIPT"
-    fi
+    echo -e "${CYAN}${BOLD}[✓] Fixing Windows line endings in CUDA script...${NC}"
     
-    sudo chmod +x "$CUDA_SCRIPT"
-    sudo bash "$CUDA_SCRIPT"
+    # Method 1: Direct sed replacement for shebang line
+    echo -e "${CYAN}${BOLD}[✓] Using sed to fix first line (shebang)...${NC}"
+    sudo sed -i -e '1s/\r$//' "$CUDA_SCRIPT" 2>/dev/null || true
+    
+    # Method 2: Create a new script with correct line endings
+    echo -e "${CYAN}${BOLD}[✓] Creating a clean version of the script...${NC}"
+    TMP_SCRIPT=$(mktemp)
+    cat "$CUDA_SCRIPT" | tr -d '\r' > "$TMP_SCRIPT"
+    sudo chmod +x "$TMP_SCRIPT"
+    
+    # Execute the fixed script
+    echo -e "${CYAN}${BOLD}[✓] Running CUDA installation...${NC}"
+    sudo bash "$TMP_SCRIPT"
+    rm "$TMP_SCRIPT"
 else
     echo -e "${RED}${BOLD}[✗] Could not find cuda.sh. CUDA installation skipped.${NC}"
-    echo -e "${YELLOW}${BOLD}[!] Please install CUDA manually or run cuda.sh separately.${NC}"
+    echo -e "${YELLOW}${BOLD}[!] Please make sure cuda.sh is in the same directory as install.sh${NC}"
 fi
 
 # Find and make run_rl_swarm.sh executable
