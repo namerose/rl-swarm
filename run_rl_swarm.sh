@@ -63,7 +63,12 @@ cleanup() {
     # Kill tunnel processes if they exist
     if [ -n "${TUNNEL_PID+x}" ]; then
         echo ">> Shutting down tunnel..."
-        kill $TUNNEL_PID 2> /dev/null || true
+        # Check if process exists before attempting to kill it
+        if ps -p $TUNNEL_PID > /dev/null 2>&1; then
+            kill $TUNNEL_PID 2> /dev/null || true
+        else
+            echo ">> Tunnel process already terminated"
+        fi
     fi
 
     # Kill all processes belonging to this script's process group
@@ -98,6 +103,57 @@ while true; do
     esac
 done
 
+# Add memory fraction customization
+while true; do
+    echo -en $GREEN_TEXT
+    read -p ">> Would you like to customize the memory fraction to avoid OOM issues? [y/N] " mf_yn
+    echo -en $RESET_TEXT
+    mf_yn=${mf_yn:-N}  # Default to "N" if the user presses Enter
+    case $mf_yn in
+        [Yy]*)
+            while true; do
+                echo -en $GREEN_TEXT
+                read -p ">> Enter memory fraction value (min: 0.82, default: 0.95): " mem_fraction
+                echo -en $RESET_TEXT
+                mem_fraction=${mem_fraction:-0.95}  # Default to 0.95 if the user presses Enter
+                
+                # Validate the input is a number and meets the minimum requirement
+                if [[ $mem_fraction =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+                    # Extract integer and decimal parts
+                    int_part=${mem_fraction%.*}
+                    if [[ $mem_fraction == *.* ]]; then
+                        dec_part=${mem_fraction#*.}
+                    else
+                        dec_part=0
+                    fi
+                    
+                    # Compare with 0.82: either integer part > 0 or decimal part >= 82
+                    if [[ $int_part -gt 0 ]] || [[ $int_part -eq 0 && $dec_part -ge 82 ]]; then
+                        # Update memory_utils.py with the new value
+                        if [[ "$OSTYPE" == "darwin"* ]]; then
+                            # macOS version
+                            sed -i '' "s/DEFAULT_MEMORY_FRACTION = 0\.[0-9]\+/DEFAULT_MEMORY_FRACTION = $mem_fraction/" "$ROOT/hivemind_exp/runner/memory_utils.py"
+                        else
+                            # Linux version
+                            sed -i "s/DEFAULT_MEMORY_FRACTION = 0\.[0-9]\+/DEFAULT_MEMORY_FRACTION = $mem_fraction/" "$ROOT/hivemind_exp/runner/memory_utils.py"
+                        fi
+                        echo_green ">> Memory fraction updated to $mem_fraction"
+                        break
+                    else
+                        echo ">>> Please enter a valid number greater than or equal to 0.82."
+                    fi
+                else
+                    echo ">>> Please enter a valid number."
+                fi
+            done
+            break ;;
+        [Nn]*)  
+            echo_green ">> Using default memory fraction (0.95)"
+            break ;;
+        *)  echo ">>> Please answer yes or no." ;;
+    esac
+done
+
 while true; do
     echo -en $GREEN_TEXT
     read -p ">> Which swarm would you like to join (Math (A) or Math Hard (B))? [A/b] " ab
@@ -122,6 +178,92 @@ while true; do
     case $pc in
         0.5 | 1.5 | 7 | 32 | 72) PARAM_B=$pc && break ;;
         *)  echo ">>> Please answer in [0.5, 1.5, 7, 32, 72]." ;;
+    esac
+done
+
+# Add training parameters customization
+CUSTOM_PARAMS=false
+while true; do
+    echo -en $GREEN_TEXT
+    read -p ">> Would you like to customize the training parameters? [y/N] " tp_yn
+    echo -en $RESET_TEXT
+    tp_yn=${tp_yn:-N}  # Default to "N" if the user presses Enter
+    case $tp_yn in
+        [Yy]*)
+            CUSTOM_PARAMS=true
+            # Ask for parameters one by one
+            echo_green ">> Please enter values for the following parameters (press Enter to keep default):"
+            
+            # max_steps
+            echo -en $GREEN_TEXT
+            read -p ">> max_steps (default: 20): " max_steps
+            echo -en $RESET_TEXT
+            max_steps=${max_steps:-20}
+            
+            # num_generations
+            echo -en $GREEN_TEXT
+            read -p ">> num_generations (default: 4): " num_generations
+            echo -en $RESET_TEXT
+            num_generations=${num_generations:-4}
+            
+            # per_device_train_batch_size
+            echo -en $GREEN_TEXT
+            read -p ">> per_device_train_batch_size (default: 4): " batch_size
+            echo -en $RESET_TEXT
+            batch_size=${batch_size:-4}
+            
+            # gradient_accumulation_steps
+            echo -en $GREEN_TEXT
+            read -p ">> gradient_accumulation_steps (default: 4): " grad_accum
+            echo -en $RESET_TEXT
+            grad_accum=${grad_accum:-4}
+            
+            # gradient_checkpointing
+            while true; do
+                echo -en $GREEN_TEXT
+                read -p ">> gradient_checkpointing [true/false] (default: true): " grad_check
+                echo -en $RESET_TEXT
+                grad_check=${grad_check:-true}
+                case $grad_check in
+                    true|false) break ;;
+                    *) echo ">>> Please enter true or false." ;;
+                esac
+            done
+            
+            # learning_rate - only allow changing the coefficient (1-7), keep .0e-7 fixed
+            while true; do
+                echo -en $GREEN_TEXT
+                read -p ">> learning_rate coefficient (1-7, default: 5): " lr_coef
+                echo -en $RESET_TEXT
+                lr_coef=${lr_coef:-5}
+                
+                # Validate that input is a number between 1-7
+                if [[ $lr_coef =~ ^[1-7]$ ]]; then
+                    learning_rate="${lr_coef}.0e-7"
+                    break
+                else
+                    echo ">>> Please enter a number between 1 and 7."
+                fi
+            done
+            
+            # logging_steps
+            echo -en $GREEN_TEXT
+            read -p ">> logging_steps (default: 2): " logging_steps
+            echo -en $RESET_TEXT
+            logging_steps=${logging_steps:-2}
+            
+            # save_steps
+            echo -en $GREEN_TEXT
+            read -p ">> save_steps (default: 25): " save_steps
+            echo -en $RESET_TEXT
+            save_steps=${save_steps:-25}
+            
+            echo_green ">> Parameters will be updated in the selected configuration file."
+            break ;;
+        [Nn]*)  
+            echo_green ">> Using default training parameters"
+            break ;;
+        *)  echo ">>> Please answer yes or no." ;;
     esac
 done
 
@@ -332,13 +474,32 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
 
     # Wait until the API key is activated by the client
     echo "Waiting for API key to become activated..."
+    
+    # Add a timeout mechanism (10 minutes = 600 seconds)
+    TIMEOUT=600
+    START_TIME=$(date +%s)
+    
     while true; do
-        STATUS=$(curl -s "$SERVER_URL/api/get-api-key-status?orgId=$ORG_ID")
+        CURRENT_TIME=$(date +%s)
+        ELAPSED_TIME=$((CURRENT_TIME - START_TIME))
+        
+        if [ $ELAPSED_TIME -gt $TIMEOUT ]; then
+            echo "Timeout reached waiting for API key activation. Continuing anyway..."
+            break
+        fi
+        
+        # Add error handling for curl command
+        STATUS=$(curl -s --connect-timeout 10 --max-time 30 "$SERVER_URL/api/get-api-key-status?orgId=$ORG_ID" || echo "connection_error")
+        
         if [[ "$STATUS" == "activated" ]]; then
             echo "API key is activated! Proceeding..."
             break
+        elif [[ "$STATUS" == "connection_error" ]]; then
+            echo "Connection error when checking API key status. Retrying in 10 seconds..."
+            sleep 10
         else
-            echo "Waiting for API key to be activated..."
+            REMAINING=$((TIMEOUT - ELAPSED_TIME))
+            echo "Waiting for API key to be activated... (Timeout in $REMAINING seconds)"
             sleep 5
         fi
     done
@@ -347,6 +508,170 @@ fi
 echo_green ">> Getting requirements..."
 
 pip install --upgrade pip
+# Function to update YAML config file with EXTENSIVE debugging
+update_yaml_config() {
+    local config_file=$1
+    local temp_file="${config_file}.tmp"
+    
+    echo_green "======================= CONFIG UPDATE DEBUGGING ======================="
+    echo_green ">> SELECTED MODEL: ${PARAM_B}B"
+    echo_green ">> UPDATING CONFIG FILE: $config_file"
+    
+    # Check if config file exists
+    if [ ! -f "$config_file" ]; then
+        echo_green "ERROR: Config file does not exist: $config_file"
+        echo_green "Current directory: $(pwd)"
+        echo_green "Listing configs directory:"
+        ls -la "$ROOT/hivemind_exp/configs/gpu/"
+        return 1
+    fi
+    
+    echo_green ">> Config file exists and is being read"
+    echo_green ">> File size: $(wc -c < "$config_file") bytes"
+    echo_green ">> File permissions: $(ls -l "$config_file")"
+    
+    # Display entire file content for debugging
+    echo_green ">> ORIGINAL CONFIG FILE CONTENT:"
+    cat "$config_file" | tee "$ROOT/logs/original_config.log"
+    echo_green ">> End of original config"
+    
+    # Create a temporary file with clear error handling
+    if ! > "$temp_file"; then
+        echo_green "ERROR: Could not create temporary file: $temp_file"
+        echo_green "Checking directory permissions: $(ls -ld "$(dirname "$temp_file")")"
+        return 1
+    fi
+    
+    echo_green ">> Successfully created temp file: $temp_file"
+    
+    # Count matches for each parameter before changes
+    echo_green ">> PARAMETER SEARCH RESULTS:"
+    echo "max_steps matches: $(grep -c "^[[:space:]]*max_steps:" "$config_file")"
+    echo "num_generations matches: $(grep -c "^[[:space:]]*num_generations:" "$config_file")"
+    echo "per_device_train_batch_size matches: $(grep -c "^[[:space:]]*per_device_train_batch_size:" "$config_file")"
+    echo "gradient_accumulation_steps matches: $(grep -c "^[[:space:]]*gradient_accumulation_steps:" "$config_file")"
+    echo "gradient_checkpointing matches: $(grep -c "^[[:space:]]*gradient_checkpointing:" "$config_file")"
+    echo "learning_rate matches: $(grep -c "^[[:space:]]*learning_rate:" "$config_file")"
+    echo "logging_steps matches: $(grep -c "^[[:space:]]*logging_steps:" "$config_file")"
+    echo "save_steps matches: $(grep -c "^[[:space:]]*save_steps:" "$config_file")"
+    
+    # Show current parameter values
+    echo_green ">> CURRENT PARAMETER VALUES:"
+    grep "^[[:space:]]*max_steps:" "$config_file" || echo "max_steps not found"
+    grep "^[[:space:]]*num_generations:" "$config_file" || echo "num_generations not found"
+    grep "^[[:space:]]*per_device_train_batch_size:" "$config_file" || echo "per_device_train_batch_size not found"
+    grep "^[[:space:]]*gradient_accumulation_steps:" "$config_file" || echo "gradient_accumulation_steps not found"
+    grep "^[[:space:]]*gradient_checkpointing:" "$config_file" || echo "gradient_checkpointing not found"
+    grep "^[[:space:]]*learning_rate:" "$config_file" || echo "learning_rate not found"
+    grep "^[[:space:]]*logging_steps:" "$config_file" || echo "logging_steps not found"
+    grep "^[[:space:]]*save_steps:" "$config_file" || echo "save_steps not found"
+    
+    echo_green ">> NEW PARAMETER VALUES TO SET:"
+    echo "max_steps: $max_steps"
+    echo "num_generations: $num_generations"
+    echo "per_device_train_batch_size: $batch_size"
+    echo "gradient_accumulation_steps: $grad_accum"
+    echo "gradient_checkpointing: $grad_check"
+    echo "learning_rate: $learning_rate"
+    echo "logging_steps: $logging_steps"
+    echo "save_steps: $save_steps"
+    
+    # Process the file line by line with detailed logging
+    local changes_made=0
+    local line_number=0
+    
+    echo_green ">> PROCESSING FILE LINE BY LINE:"
+    while IFS= read -r line; do
+        ((line_number++))
+        # Check for each parameter and replace if found
+        if [[ $line =~ ^[[:space:]]*max_steps:[[:space:]]* ]]; then
+            echo "max_steps: $max_steps" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [max_steps: $max_steps]"
+            ((changes_made++))
+        elif [[ $line =~ ^[[:space:]]*num_generations:[[:space:]]* ]]; then
+            echo "num_generations: $num_generations" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [num_generations: $num_generations]"
+            ((changes_made++))
+        elif [[ $line =~ ^[[:space:]]*per_device_train_batch_size:[[:space:]]* ]]; then
+            echo "per_device_train_batch_size: $batch_size" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [per_device_train_batch_size: $batch_size]"
+            ((changes_made++))
+        elif [[ $line =~ ^[[:space:]]*gradient_accumulation_steps:[[:space:]]* ]]; then
+            echo "gradient_accumulation_steps: $grad_accum" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [gradient_accumulation_steps: $grad_accum]"
+            ((changes_made++))
+        elif [[ $line =~ ^[[:space:]]*gradient_checkpointing:[[:space:]]* ]]; then
+            echo "gradient_checkpointing: $grad_check" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [gradient_checkpointing: $grad_check]"
+            ((changes_made++))
+        elif [[ $line =~ ^[[:space:]]*learning_rate:[[:space:]]* ]]; then
+            echo "learning_rate: $learning_rate" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [learning_rate: $learning_rate]"
+            ((changes_made++))
+        elif [[ $line =~ ^[[:space:]]*logging_steps:[[:space:]]* ]]; then
+            echo "logging_steps: $logging_steps" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [logging_steps: $logging_steps]"
+            ((changes_made++))
+        elif [[ $line =~ ^[[:space:]]*save_steps:[[:space:]]* ]]; then
+            echo "save_steps: $save_steps" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [save_steps: $save_steps]"
+            ((changes_made++))
+        else
+            # Keep unchanged lines
+            echo "$line" >> "$temp_file"
+        fi
+    done < "$config_file"
+    
+    echo_green ">> TOTAL CHANGES MADE: $changes_made"
+    
+    # Make a backup of the original file
+    if ! cp "$config_file" "${config_file}.bak"; then
+        echo_green "ERROR: Could not create backup file: ${config_file}.bak"
+        return 1
+    fi
+    
+    echo_green ">> Successfully created backup: ${config_file}.bak"
+    
+    # Replace the original file with our modified version
+    if ! mv "$temp_file" "$config_file"; then
+        echo_green "ERROR: Could not replace original file with modified version"
+        echo_green "Temp file exists: $([ -f "$temp_file" ] && echo "Yes" || echo "No")"
+        return 1
+    fi
+    
+    echo_green ">> Successfully replaced original file with modified version"
+    
+    # Verify changes by displaying diff
+    echo_green ">> DIFF BETWEEN ORIGINAL AND MODIFIED CONFIG:"
+    diff "${config_file}.bak" "$config_file" || echo "No changes detected in diff! Check file format or permissions."
+    
+    # Final verification
+    echo_green ">> FINAL CONFIG FILE CONTENT:"
+    cat "$config_file" | tee "$ROOT/logs/updated_config.log"
+    
+    # Double-check parameters in final file
+    echo_green ">> VERIFYING PARAMETERS IN FINAL FILE:"
+    grep "^[[:space:]]*max_steps:" "$config_file" || echo "WARNING: max_steps not found in final file!"
+    grep "^[[:space:]]*num_generations:" "$config_file" || echo "WARNING: num_generations not found in final file!"
+    grep "^[[:space:]]*per_device_train_batch_size:" "$config_file" || echo "WARNING: per_device_train_batch_size not found in final file!"
+    grep "^[[:space:]]*gradient_accumulation_steps:" "$config_file" || echo "WARNING: gradient_accumulation_steps not found in final file!"
+    grep "^[[:space:]]*gradient_checkpointing:" "$config_file" || echo "WARNING: gradient_checkpointing not found in final file!"
+    grep "^[[:space:]]*learning_rate:" "$config_file" || echo "WARNING: learning_rate not found in final file!"
+    grep "^[[:space:]]*logging_steps:" "$config_file" || echo "WARNING: logging_steps not found in final file!"
+    grep "^[[:space:]]*save_steps:" "$config_file" || echo "WARNING: save_steps not found in final file!"
+    
+    echo_green ">> Config file update process completed"
+    echo_green "========================= END DEBUGGING ========================="
+    
+    # Return success if changes were made
+    if [ $changes_made -gt 0 ]; then
+        return 0
+    else
+        echo_green "WARNING: No changes were made to the config file!"
+        return 1
+    fi
+}
+
 if [ -n "$CPU_ONLY" ] || ! command -v nvidia-smi &> /dev/null; then
     # CPU-only mode or no NVIDIA GPU found
     pip install -r "$ROOT"/requirements-cpu.txt
@@ -368,6 +693,17 @@ else
     else
         GAME="gsm8k"
     fi
+fi
+
+# Update config with custom parameters if requested
+if [ "$CUSTOM_PARAMS" = true ]; then
+    echo_green ">> Updating configuration with custom parameters"
+    # Call the function but don't let its return code affect the script execution
+    update_yaml_config "$CONFIG_PATH" || {
+        echo_green ">> Warning: Configuration update may not have been successful, but proceeding anyway"
+    }
+    # Make sure the script continues even if the config update failed
+    echo_green ">> Configuration update step completed, continuing with training"
 fi
 
 echo_green ">> Done!"
