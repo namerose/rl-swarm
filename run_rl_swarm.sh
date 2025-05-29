@@ -423,8 +423,8 @@ determine_memory_fraction() {
     local param_size=$1
     local available_vram=$2
     
-    # Default memory fraction
-    local memory_fraction=0.95
+    # Default memory fraction - minimum is now 0.85
+    local memory_fraction=0.90
     
     # Adjust memory fraction based on model size and available VRAM
     if [[ "$param_size" == "72" ]]; then
@@ -456,7 +456,12 @@ determine_memory_fraction() {
             memory_fraction=0.85
         fi
     else
-        # 0.5B models - use lower fraction as they're smaller
+        # 0.5B models - use minimum fraction
+        memory_fraction=0.85
+    fi
+    
+    # Ensure we never go below 0.85
+    if (( $(echo "$memory_fraction < 0.85" | awk '{print ($1<$2)}') )); then
         memory_fraction=0.85
     fi
     
@@ -470,20 +475,33 @@ RECOMMENDED_MEMORY_FRACTION=$(determine_memory_fraction "$PARAM_B" "$AVAILABLE_M
 echo_green ">> Memory Configuration:"
 echo "   Recommended memory fraction for ${PARAM_B}B model: ${RECOMMENDED_MEMORY_FRACTION}"
 echo "   (Memory fraction controls how much of your available VRAM will be used)"
+echo "   Minimum value: 0.85, Maximum value: 0.95"
 echo -en $GREEN_TEXT
-read -p ">> Enter memory fraction [0.5-0.95] or press Enter for recommended value (${RECOMMENDED_MEMORY_FRACTION}): " user_memory_fraction
+read -p ">> Enter memory fraction [0.85-0.95] or press Enter for recommended value (${RECOMMENDED_MEMORY_FRACTION}): " user_memory_fraction
 echo -en $RESET_TEXT
 
-# Validate and set the memory fraction
+# Validate and set the memory fraction without using bc command
 if [[ -z "$user_memory_fraction" ]]; then
     # User pressed Enter, use recommended value
     MEMORY_FRACTION=$RECOMMENDED_MEMORY_FRACTION
 else
-    # Validate user input (must be between 0.5 and 0.95)
-    if [[ "$user_memory_fraction" =~ ^0?\.[5-9][0-9]?$ ]] && (( $(echo "$user_memory_fraction <= 0.95" | bc -l) )) && (( $(echo "$user_memory_fraction >= 0.5" | bc -l) )); then
+    # Simple pattern matching for values between 0.85 and 0.95
+    # This avoids using bc for floating point comparison
+    if [[ "$user_memory_fraction" == "0.85" || 
+          "$user_memory_fraction" == "0.86" || 
+          "$user_memory_fraction" == "0.87" || 
+          "$user_memory_fraction" == "0.88" || 
+          "$user_memory_fraction" == "0.89" || 
+          "$user_memory_fraction" == "0.9" || 
+          "$user_memory_fraction" == "0.90" || 
+          "$user_memory_fraction" == "0.91" || 
+          "$user_memory_fraction" == "0.92" || 
+          "$user_memory_fraction" == "0.93" || 
+          "$user_memory_fraction" == "0.94" || 
+          "$user_memory_fraction" == "0.95" ]]; then
         MEMORY_FRACTION=$user_memory_fraction
     else
-        echo "   Invalid input. Using recommended value: ${RECOMMENDED_MEMORY_FRACTION}"
+        echo "   Invalid input. Must be between 0.85 and 0.95. Using recommended value: ${RECOMMENDED_MEMORY_FRACTION}"
         MEMORY_FRACTION=$RECOMMENDED_MEMORY_FRACTION
     fi
 fi
