@@ -22,6 +22,13 @@ apt update && apt install -y sudo
 echo -e "${CYAN}${BOLD}[✓] Installing required packages...${NC}"
 sudo apt update && sudo apt install -y python3 python3-venv python3-pip curl wget screen git lsof nano unzip iproute2
 
+# Create symlink for python if it doesn't exist
+if ! command -v python &>/dev/null && command -v python3 &>/dev/null; then
+    echo -e "${CYAN}${BOLD}[✓] Creating symlink from python3 to python...${NC}"
+    sudo ln -sf $(which python3) /usr/bin/python
+    echo -e "${GREEN}${BOLD}[✓] Python symlink created: $(python --version)${NC}"
+fi
+
 # Install Node.js 20 and npm
 echo -e "${CYAN}${BOLD}[✓] Installing Node.js 20 and npm...${NC}"
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
