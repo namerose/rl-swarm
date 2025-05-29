@@ -42,10 +42,10 @@ fi
 # If cuda.sh is still not found, check in rl-swarm-main directory
 if [ ! -f "$CUDA_SCRIPT" ] && [ -d "/rl-swarm" ]; then
     CUDA_SCRIPT="/rl-swarm/cuda.sh"
-elif [ ! -f "$CUDA_SCRIPT" ] && [ -d "/rl-swarm-main" ]; then
-    CUDA_SCRIPT="/rl-swarm-main/cuda.sh"
-elif [ ! -f "$CUDA_SCRIPT" ] && [ -d "$HOME/rl-swarm-main" ]; then
-    CUDA_SCRIPT="$HOME/rl-swarm-main/cuda.sh"
+elif [ ! -f "$CUDA_SCRIPT" ] && [ -d "/rl-swarm" ]; then
+    CUDA_SCRIPT="/rl-swarm/cuda.sh"
+elif [ ! -f "$CUDA_SCRIPT" ] && [ -d "$HOME/rl-swarm" ]; then
+    CUDA_SCRIPT="$HOME/rl-swarm/cuda.sh"
 fi
 
 # If cuda.sh is found, make it executable and run it
