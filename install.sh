@@ -39,18 +39,26 @@ if [ ! -f "$CUDA_SCRIPT" ]; then
     CUDA_SCRIPT="$(pwd)/cuda.sh"
 fi
 
-# If cuda.sh is still not found, check in rl-swarm-main directory
+# If cuda.sh is still not found, check in common locations
 if [ ! -f "$CUDA_SCRIPT" ] && [ -d "/rl-swarm" ]; then
-    CUDA_SCRIPT="/rl-swarm/cuda.sh"
-elif [ ! -f "$CUDA_SCRIPT" ] && [ -d "/rl-swarm" ]; then
     CUDA_SCRIPT="/rl-swarm/cuda.sh"
 elif [ ! -f "$CUDA_SCRIPT" ] && [ -d "$HOME/rl-swarm" ]; then
     CUDA_SCRIPT="$HOME/rl-swarm/cuda.sh"
 fi
 
-# If cuda.sh is found, make it executable and run it
+# If cuda.sh is found, fix line endings, make it executable and run it
 if [ -f "$CUDA_SCRIPT" ]; then
     echo -e "${GREEN}${BOLD}[✓] Found CUDA script at: $CUDA_SCRIPT${NC}"
+    
+    # Fix Windows line endings (CRLF to LF)
+    echo -e "${CYAN}${BOLD}[✓] Fixing line endings in CUDA script...${NC}"
+    if command -v dos2unix >/dev/null 2>&1; then
+        sudo dos2unix "$CUDA_SCRIPT"
+    else
+        echo -e "${YELLOW}${BOLD}[!] dos2unix not found, using sed to fix line endings...${NC}"
+        sudo apt-get install -y dos2unix >/dev/null 2>&1 || sudo sed -i 's/\r$//' "$CUDA_SCRIPT"
+    fi
+    
     sudo chmod +x "$CUDA_SCRIPT"
     sudo bash "$CUDA_SCRIPT"
 else
@@ -70,10 +78,8 @@ fi
 # Check in other common locations
 if [ ! -f "$RL_SWARM_SCRIPT" ] && [ -d "/rl-swarm" ]; then
     RL_SWARM_SCRIPT="/rl-swarm/run_rl_swarm.sh"
-elif [ ! -f "$RL_SWARM_SCRIPT" ] && [ -d "/rl-swarm-main" ]; then
-    RL_SWARM_SCRIPT="/rl-swarm-main/run_rl_swarm.sh"
-elif [ ! -f "$RL_SWARM_SCRIPT" ] && [ -d "$HOME/rl-swarm-main" ]; then
-    RL_SWARM_SCRIPT="$HOME/rl-swarm-main/run_rl_swarm.sh"
+elif [ ! -f "$RL_SWARM_SCRIPT" ] && [ -d "$HOME/rl-swarm" ]; then
+    RL_SWARM_SCRIPT="$HOME/rl-swarm/run_rl_swarm.sh"
 fi
 
 if [ -f "$RL_SWARM_SCRIPT" ]; then
