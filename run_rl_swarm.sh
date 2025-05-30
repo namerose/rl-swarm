@@ -219,36 +219,50 @@ while true; do
             # Ask for parameters one by one
             echo_green ">> Please enter values for the following parameters (press Enter to keep default):"
             
+            # Get default values from the YAML file (will only be used as display defaults)
+            DEFAULT_MAX_STEPS=20
+            DEFAULT_NUM_GENERATIONS=4
+            DEFAULT_BATCH_SIZE=4
+            DEFAULT_GRAD_ACCUM=4
+            DEFAULT_GRAD_CHECK="true"
+            DEFAULT_LR_COEF=5
+            DEFAULT_LOGGING_STEPS=2
+            DEFAULT_SAVE_STEPS=25
+            DEFAULT_WARMUP_RATIO=0.03
+            DEFAULT_BETA=0.001
+            DEFAULT_MAX_PROMPT_LENGTH=256
+            DEFAULT_MAX_COMPLETION_LENGTH=1024
+            
             # max_steps
             echo -en $GREEN_TEXT
-            read -p ">> max_steps (default: 20): " max_steps
+            read -p ">> max_steps (default: $DEFAULT_MAX_STEPS): " max_steps
             echo -en $RESET_TEXT
-            max_steps=${max_steps:-20}
+            max_steps=${max_steps:-$DEFAULT_MAX_STEPS}
             
             # num_generations
             echo -en $GREEN_TEXT
-            read -p ">> num_generations (default: 4): " num_generations
+            read -p ">> num_generations (default: $DEFAULT_NUM_GENERATIONS): " num_generations
             echo -en $RESET_TEXT
-            num_generations=${num_generations:-4}
+            num_generations=${num_generations:-$DEFAULT_NUM_GENERATIONS}
             
             # per_device_train_batch_size
             echo -en $GREEN_TEXT
-            read -p ">> per_device_train_batch_size (default: 4): " batch_size
+            read -p ">> per_device_train_batch_size (default: $DEFAULT_BATCH_SIZE): " batch_size
             echo -en $RESET_TEXT
-            batch_size=${batch_size:-4}
+            batch_size=${batch_size:-$DEFAULT_BATCH_SIZE}
             
             # gradient_accumulation_steps
             echo -en $GREEN_TEXT
-            read -p ">> gradient_accumulation_steps (default: 4): " grad_accum
+            read -p ">> gradient_accumulation_steps (default: $DEFAULT_GRAD_ACCUM): " grad_accum
             echo -en $RESET_TEXT
-            grad_accum=${grad_accum:-4}
+            grad_accum=${grad_accum:-$DEFAULT_GRAD_ACCUM}
             
             # gradient_checkpointing
             while true; do
                 echo -en $GREEN_TEXT
-                read -p ">> gradient_checkpointing [true/false] (default: true): " grad_check
+                read -p ">> gradient_checkpointing [true/false] (default: $DEFAULT_GRAD_CHECK): " grad_check
                 echo -en $RESET_TEXT
-                grad_check=${grad_check:-true}
+                grad_check=${grad_check:-$DEFAULT_GRAD_CHECK}
                 case $grad_check in
                     true|false) break ;;
                     *) echo ">>> Please enter true or false." ;;
@@ -258,9 +272,9 @@ while true; do
             # learning_rate - only allow changing the coefficient (1-7), keep .0e-7 fixed
             while true; do
                 echo -en $GREEN_TEXT
-                read -p ">> learning_rate coefficient (1-7, default: 5): " lr_coef
+                read -p ">> learning_rate coefficient (1-7, default: $DEFAULT_LR_COEF): " lr_coef
                 echo -en $RESET_TEXT
-                lr_coef=${lr_coef:-5}
+                lr_coef=${lr_coef:-$DEFAULT_LR_COEF}
                 
                 # Validate that input is a number between 1-7
                 if [[ $lr_coef =~ ^[1-7]$ ]]; then
@@ -273,44 +287,45 @@ while true; do
             
             # logging_steps
             echo -en $GREEN_TEXT
-            read -p ">> logging_steps (default: 2): " logging_steps
+            read -p ">> logging_steps (default: $DEFAULT_LOGGING_STEPS): " logging_steps
             echo -en $RESET_TEXT
-            logging_steps=${logging_steps:-2}
+            logging_steps=${logging_steps:-$DEFAULT_LOGGING_STEPS}
             
             # save_steps
             echo -en $GREEN_TEXT
-            read -p ">> save_steps (default: 25): " save_steps
+            read -p ">> save_steps (default: $DEFAULT_SAVE_STEPS): " save_steps
             echo -en $RESET_TEXT
-            save_steps=${save_steps:-25}
+            save_steps=${save_steps:-$DEFAULT_SAVE_STEPS}
             
             # warmup_ratio
             echo -en $GREEN_TEXT
-            read -p ">> warmup_ratio (default: 0.03): " warmup_ratio
+            read -p ">> warmup_ratio (default: $DEFAULT_WARMUP_RATIO): " warmup_ratio
             echo -en $RESET_TEXT
-            warmup_ratio=${warmup_ratio:-0.03}
+            warmup_ratio=${warmup_ratio:-$DEFAULT_WARMUP_RATIO}
             
             # beta
             echo -en $GREEN_TEXT
-            read -p ">> beta (default: 0.1): " beta
+            read -p ">> beta (default: $DEFAULT_BETA): " beta
             echo -en $RESET_TEXT
-            beta=${beta:-0.1}
+            beta=${beta:-$DEFAULT_BETA}
             
             # max_prompt_length
             echo -en $GREEN_TEXT
-            read -p ">> max_prompt_length (default: 512): " max_prompt_length
+            read -p ">> max_prompt_length (default: $DEFAULT_MAX_PROMPT_LENGTH): " max_prompt_length
             echo -en $RESET_TEXT
-            max_prompt_length=${max_prompt_length:-512}
+            max_prompt_length=${max_prompt_length:-$DEFAULT_MAX_PROMPT_LENGTH}
             
             # max_completion_length
             echo -en $GREEN_TEXT
-            read -p ">> max_completion_length (default: 128): " max_completion_length
+            read -p ">> max_completion_length (default: $DEFAULT_MAX_COMPLETION_LENGTH): " max_completion_length
             echo -en $RESET_TEXT
-            max_completion_length=${max_completion_length:-128}
+            max_completion_length=${max_completion_length:-$DEFAULT_MAX_COMPLETION_LENGTH}
             
             echo_green ">> Parameters will be updated in the selected configuration file."
             break ;;
         [Nn]*)  
-            echo_green ">> Using default training parameters"
+            # When user selects N, don't modify any YAML parameters
+            echo_green ">> Using default training parameters from original YAML file (no modifications)"
             break ;;
         *)  echo ">>> Please answer yes or no." ;;
     esac
@@ -901,7 +916,7 @@ else
     fi
 fi
 
-# Update config with custom parameters if requested
+# Update config with custom parameters ONLY if user requested customization
 if [ "$CUSTOM_PARAMS" = true ]; then
     echo_green ">> Updating configuration with custom parameters"
     # Call the function but don't let its return code affect the script execution
@@ -910,6 +925,8 @@ if [ "$CUSTOM_PARAMS" = true ]; then
     }
     # Make sure the script continues even if the config update failed
     echo_green ">> Configuration update step completed, continuing with training"
+else
+    echo_green ">> Using original YAML file without modifications"
 fi
 
 echo_green ">> Done!"
