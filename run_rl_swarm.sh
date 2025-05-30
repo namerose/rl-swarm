@@ -33,10 +33,8 @@ IDENTITY_PATH=${IDENTITY_PATH:-$DEFAULT_IDENTITY_PATH}
 SMALL_SWARM_CONTRACT="0x69C6e1D608ec64885E7b185d39b04B491a71768C"
 BIG_SWARM_CONTRACT="0x6947c6E196a48B77eFa9331EC1E3e45f3Ee5Fd58"
 
-# Will ignore any visible GPUs if set.
 CPU_ONLY=${CPU_ONLY:-""}
 
-# Set if successfully parsed from modal-login/temp-data/userData.json.
 ORG_ID=${ORG_ID:-""}
 
 GREEN_TEXT="\033[32m"
@@ -53,17 +51,13 @@ echo_blue() {
 
 ROOT_DIR="$(cd $(dirname ${BASH_SOURCE[0]}) && pwd)"
 
-# Function to clean up the server process upon exit
 cleanup() {
     echo_green ">> Shutting down trainer..."
 
-    # Remove modal credentials if they exist
     rm -r $ROOT_DIR/modal-login/temp-data/*.json 2> /dev/null || true
     
-    # Kill tunnel processes if they exist
     if [ -n "${TUNNEL_PID+x}" ]; then
         echo ">> Shutting down tunnel..."
-        # Check if process exists before attempting to kill it
         if ps -p $TUNNEL_PID > /dev/null 2>&1; then
             kill $TUNNEL_PID 2> /dev/null || true
         else
@@ -71,7 +65,6 @@ cleanup() {
         fi
     fi
 
-    # Kill all processes belonging to this script's process group
     kill -- -$$ || true
 
     exit 0
@@ -103,54 +96,66 @@ while true; do
     esac
 done
 
-# Add memory fraction customization
+echo -e "\n${BLUE_TEXT}┌─────────────────────────────────────────────────────────┐${RESET_TEXT}"
+echo -e "${BLUE_TEXT}│                   MEMORY CONFIGURATION                   │${RESET_TEXT}"
+echo -e "${BLUE_TEXT}└─────────────────────────────────────────────────────────┘${RESET_TEXT}"
+echo -e "${GREEN_TEXT}Memory fraction controls how much GPU/system memory is allocated${RESET_TEXT}"
+echo -e "${GREEN_TEXT}Lower values help avoid Out-of-Memory errors but may affect performance${RESET_TEXT}"
+
 while true; do
-    echo -en $GREEN_TEXT
-    read -p ">> Would you like to customize the memory fraction to avoid OOM issues? [y/N] " mf_yn
-    echo -en $RESET_TEXT
+    echo -e "\n${BLUE_TEXT}Would you like to customize the memory fraction? [y/N]${RESET_TEXT}"
+    echo -en "${GREEN_TEXT}>> ${RESET_TEXT}"
+    read mf_yn
     mf_yn=${mf_yn:-N}  # Default to "N" if the user presses Enter
     case $mf_yn in
         [Yy]*)
-            while true; do
-                echo -en $GREEN_TEXT
-                read -p ">> Enter memory fraction value (min: 0.82, default: 0.95): " mem_fraction
-                echo -en $RESET_TEXT
-                mem_fraction=${mem_fraction:-0.95}  # Default to 0.95 if the user presses Enter
-                
-                # Validate the input is a number and meets the minimum requirement
-                if [[ $mem_fraction =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-                    # Extract integer and decimal parts
-                    int_part=${mem_fraction%.*}
-                    if [[ $mem_fraction == *.* ]]; then
-                        dec_part=${mem_fraction#*.}
-                    else
-                        dec_part=0
-                    fi
-                    
-                    # Compare with 0.82: either integer part > 0 or decimal part >= 82
-                    if [[ $int_part -gt 0 ]] || [[ $int_part -eq 0 && $dec_part -ge 82 ]]; then
-                        # Update memory_utils.py with the new value
-                        if [[ "$OSTYPE" == "darwin"* ]]; then
-                            # macOS version
-                            sed -i '' "s/DEFAULT_MEMORY_FRACTION = 0\.[0-9]\+/DEFAULT_MEMORY_FRACTION = $mem_fraction/" "$ROOT/hivemind_exp/runner/memory_utils.py"
+            echo -e "\n${BLUE_TEXT}Memory Fraction Options:${RESET_TEXT}"
+            echo -e "  ${GREEN_TEXT}1) Low Memory Usage (0.82) - Best for avoiding OOM errors${RESET_TEXT}"
+            echo -e "  ${GREEN_TEXT}2) Balanced (0.88) - Good compromise${RESET_TEXT}"
+            echo -e "  ${GREEN_TEXT}3) High Performance (0.95) - Default${RESET_TEXT}"
+            echo -e "  ${GREEN_TEXT}4) Custom Value${RESET_TEXT}"
+            
+            echo -en "\n${BLUE_TEXT}Select an option [1-4]: ${RESET_TEXT}"
+            read mem_option
+            
+            case $mem_option in
+                1) mem_fraction=0.82 ;;
+                2) mem_fraction=0.88 ;;
+                3) mem_fraction=0.95 ;;
+                4)
+                    while true; do
+                        echo -en "\n${BLUE_TEXT}Enter memory fraction (0.82-0.95): ${RESET_TEXT}"
+                        read mem_fraction
+                        mem_fraction=${mem_fraction:-0.95}  # Default to 0.95 if the user presses Enter
+                        
+                        # Validate the input
+                        if [[ $mem_fraction =~ ^0\.[0-9]{1,2}$ ]] && (( $(echo "$mem_fraction >= 0.82" | bc -l) )) && (( $(echo "$mem_fraction <= 0.95" | bc -l) )); then
+                            break
                         else
-                            # Linux version
-                            sed -i "s/DEFAULT_MEMORY_FRACTION = 0\.[0-9]\+/DEFAULT_MEMORY_FRACTION = $mem_fraction/" "$ROOT/hivemind_exp/runner/memory_utils.py"
+                            echo -e "${RED_TEXT}>>> Please enter a valid number between 0.82 and 0.95.${RESET_TEXT}"
                         fi
-                        echo_green ">> Memory fraction updated to $mem_fraction"
-                        break
-                    else
-                        echo ">>> Please enter a valid number greater than or equal to 0.82."
-                    fi
-                else
-                    echo ">>> Please enter a valid number."
-                fi
-            done
+                    done
+                    ;;
+                *) 
+                    echo -e "${GREEN_TEXT}>>> Invalid option. Using default (0.95).${RESET_TEXT}"
+                    mem_fraction=0.95
+                    ;;
+            esac
+            
+            # Update memory_utils.py with the new value
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                # macOS version
+                sed -i '' "s/DEFAULT_MEMORY_FRACTION = 0\.[0-9]\+/DEFAULT_MEMORY_FRACTION = $mem_fraction/" "$ROOT/hivemind_exp/runner/memory_utils.py"
+            else
+                # Linux version
+                sed -i "s/DEFAULT_MEMORY_FRACTION = 0\.[0-9]\+/DEFAULT_MEMORY_FRACTION = $mem_fraction/" "$ROOT/hivemind_exp/runner/memory_utils.py"
+            fi
+            echo -e "\n${GREEN_TEXT}>> Memory fraction set to $mem_fraction${RESET_TEXT}"
             break ;;
         [Nn]*)  
-            echo_green ">> Using default memory fraction (0.95)"
+            echo -e "\n${GREEN_TEXT}>> Using default memory fraction (0.95)${RESET_TEXT}"
             break ;;
-        *)  echo ">>> Please answer yes or no." ;;
+        *)  echo -e "${RED_TEXT}>>> Please answer yes or no.${RESET_TEXT}" ;;
     esac
 done
 
@@ -181,89 +186,182 @@ while true; do
     esac
 done
 
-# Add training parameters customization
+echo -e "\n${BLUE_TEXT}┌─────────────────────────────────────────────────────────┐${RESET_TEXT}"
+echo -e "${BLUE_TEXT}│                TRAINING CONFIGURATION                    │${RESET_TEXT}"
+echo -e "${BLUE_TEXT}└─────────────────────────────────────────────────────────┘${RESET_TEXT}"
+echo -e "${GREEN_TEXT}Training parameters control the learning process and memory usage${RESET_TEXT}"
+
 CUSTOM_PARAMS=false
 while true; do
-    echo -en $GREEN_TEXT
-    read -p ">> Would you like to customize the training parameters? [y/N] " tp_yn
-    echo -en $RESET_TEXT
+    echo -e "\n${BLUE_TEXT}Would you like to customize the training parameters? [y/N]${RESET_TEXT}"
+    echo -en "${GREEN_TEXT}>> ${RESET_TEXT}"
+    read tp_yn
     tp_yn=${tp_yn:-N}  # Default to "N" if the user presses Enter
     case $tp_yn in
         [Yy]*)
             CUSTOM_PARAMS=true
-            # Ask for parameters one by one
-            echo_green ">> Please enter values for the following parameters (press Enter to keep default):"
+            echo -e "\n${BLUE_TEXT}Choose a configuration preset:${RESET_TEXT}"
+            echo -e "  ${GREEN_TEXT}1) Low Memory Usage - For limited GPU memory${RESET_TEXT}"
+            echo -e "  ${GREEN_TEXT}2) Balanced - Default settings${RESET_TEXT}"
+            echo -e "  ${GREEN_TEXT}3) High Performance - For powerful GPUs${RESET_TEXT}"
+            echo -e "  ${GREEN_TEXT}4) Custom - Set each parameter manually${RESET_TEXT}"
             
-            # max_steps
-            echo -en $GREEN_TEXT
-            read -p ">> max_steps (default: 20): " max_steps
-            echo -en $RESET_TEXT
-            max_steps=${max_steps:-20}
+            echo -en "\n${BLUE_TEXT}Select an option [1-4]: ${RESET_TEXT}"
+            read preset_option
             
-            # num_generations
-            echo -en $GREEN_TEXT
-            read -p ">> num_generations (default: 4): " num_generations
-            echo -en $RESET_TEXT
-            num_generations=${num_generations:-4}
-            
-            # per_device_train_batch_size
-            echo -en $GREEN_TEXT
-            read -p ">> per_device_train_batch_size (default: 4): " batch_size
-            echo -en $RESET_TEXT
-            batch_size=${batch_size:-4}
-            
-            # gradient_accumulation_steps
-            echo -en $GREEN_TEXT
-            read -p ">> gradient_accumulation_steps (default: 4): " grad_accum
-            echo -en $RESET_TEXT
-            grad_accum=${grad_accum:-4}
-            
-            # gradient_checkpointing
-            while true; do
-                echo -en $GREEN_TEXT
-                read -p ">> gradient_checkpointing [true/false] (default: true): " grad_check
-                echo -en $RESET_TEXT
-                grad_check=${grad_check:-true}
-                case $grad_check in
-                    true|false) break ;;
-                    *) echo ">>> Please enter true or false." ;;
-                esac
-            done
-            
-            # learning_rate - only allow changing the coefficient (1-7), keep .0e-7 fixed
-            while true; do
-                echo -en $GREEN_TEXT
-                read -p ">> learning_rate coefficient (1-7, default: 5): " lr_coef
-                echo -en $RESET_TEXT
-                lr_coef=${lr_coef:-5}
-                
-                # Validate that input is a number between 1-7
-                if [[ $lr_coef =~ ^[1-7]$ ]]; then
+            case $preset_option in
+                1)  # Low Memory preset
+                    max_steps=10
+                    num_generations=2
+                    batch_size=2
+                    grad_accum=2
+                    grad_check="true"
+                    lr_coef=3
                     learning_rate="${lr_coef}.0e-7"
-                    break
-                else
-                    echo ">>> Please enter a number between 1 and 7."
-                fi
-            done
+                    logging_steps=1
+                    save_steps=10
+                    echo -e "\n${GREEN_TEXT}Selected Low Memory preset with:${RESET_TEXT}"
+                    ;;
+                2)  # Balanced preset (default)
+                    max_steps=20
+                    num_generations=4
+                    batch_size=4
+                    grad_accum=4
+                    grad_check="true"
+                    lr_coef=5
+                    learning_rate="${lr_coef}.0e-7"
+                    logging_steps=2
+                    save_steps=25
+                    echo -e "\n${GREEN_TEXT}Selected Balanced preset with:${RESET_TEXT}"
+                    ;;
+                3)  # High Performance preset
+                    max_steps=30
+                    num_generations=6
+                    batch_size=6
+                    grad_accum=6
+                    grad_check="true"
+                    lr_coef=5
+                    learning_rate="${lr_coef}.0e-7"
+                    logging_steps=3
+                    save_steps=30
+                    echo -e "\n${GREEN_TEXT}Selected High Performance preset with:${RESET_TEXT}"
+                    ;;
+                4)  # Custom settings
+                    echo -e "\n${BLUE_TEXT}=== Custom Training Parameters ===${RESET_TEXT}"
+                    echo -e "${GREEN_TEXT}Please enter values for each parameter (press Enter for default)${RESET_TEXT}"
+                    
+                    # max_steps
+                    echo -en "\n${BLUE_TEXT}max_steps (default: 20): ${RESET_TEXT}"
+                    read max_steps
+                    max_steps=${max_steps:-20}
+                    
+                    # num_generations
+                    echo -en "${BLUE_TEXT}num_generations (default: 4): ${RESET_TEXT}"
+                    read num_generations
+                    num_generations=${num_generations:-4}
+                    
+                    # per_device_train_batch_size
+                    echo -en "${BLUE_TEXT}per_device_train_batch_size (default: 4): ${RESET_TEXT}"
+                    read batch_size
+                    batch_size=${batch_size:-4}
+                    
+                    # gradient_accumulation_steps
+                    echo -en "${BLUE_TEXT}gradient_accumulation_steps (default: 4): ${RESET_TEXT}"
+                    read grad_accum
+                    grad_accum=${grad_accum:-4}
+                    
+                    # gradient_checkpointing
+                    while true; do
+                        echo -en "${BLUE_TEXT}gradient_checkpointing [true/false] (default: true): ${RESET_TEXT}"
+                        read grad_check
+                        grad_check=${grad_check:-true}
+                        case $grad_check in
+                            true|false) break ;;
+                            *) echo -e "${RED_TEXT}>>> Please enter true or false.${RESET_TEXT}" ;;
+                        esac
+                    done
+                    
+                    # learning_rate coefficient
+                    while true; do
+                        echo -en "${BLUE_TEXT}learning_rate coefficient (1-7, default: 5): ${RESET_TEXT}"
+                        read lr_coef
+                        lr_coef=${lr_coef:-5}
+                        
+                        if [[ $lr_coef =~ ^[1-7]$ ]]; then
+                            learning_rate="${lr_coef}.0e-7"
+                            break
+                        else
+                            echo -e "${RED_TEXT}>>> Please enter a number between 1 and 7.${RESET_TEXT}"
+                        fi
+                    done
+                    
+                    # logging_steps
+                    echo -en "${BLUE_TEXT}logging_steps (default: 2): ${RESET_TEXT}"
+                    read logging_steps
+                    logging_steps=${logging_steps:-2}
+                    
+                    # save_steps
+                    echo -en "${BLUE_TEXT}save_steps (default: 25): ${RESET_TEXT}"
+                    read save_steps
+                    save_steps=${save_steps:-25}
+                    
+                    # warmup_ratio
+                    echo -en "${BLUE_TEXT}warmup_ratio (default: 0.03): ${RESET_TEXT}"
+                    read warmup_ratio
+                    warmup_ratio=${warmup_ratio:-0.03}
+                    
+                    # beta
+                    echo -en "${BLUE_TEXT}beta (default: 0.01): ${RESET_TEXT}"
+                    read beta
+                    beta=${beta:-0.01}
+                    
+                    # max_prompt_length
+                    echo -en "${BLUE_TEXT}max_prompt_length (default: 512): ${RESET_TEXT}"
+                    read max_prompt_length
+                    max_prompt_length=${max_prompt_length:-512}
+                    
+                    # max_completion_length
+                    echo -en "${BLUE_TEXT}max_completion_length (default: 128): ${RESET_TEXT}"
+                    read max_completion_length
+                    max_completion_length=${max_completion_length:-128}
+                    
+                    echo -e "\n${GREEN_TEXT}Custom parameters set with:${RESET_TEXT}"
+                    ;;
+                *)  # Invalid option - use defaults
+                    echo -e "${RED_TEXT}>>> Invalid option. Using default balanced settings.${RESET_TEXT}"
+                    max_steps=20
+                    num_generations=4
+                    batch_size=4
+                    grad_accum=4
+                    grad_check="true"
+                    lr_coef=5
+                    learning_rate="${lr_coef}.0e-7"
+                    logging_steps=2
+                    save_steps=25
+                    echo -e "\n${GREEN_TEXT}Using default settings with:${RESET_TEXT}"
+                    ;;
+            esac
             
-            # logging_steps
-            echo -en $GREEN_TEXT
-            read -p ">> logging_steps (default: 2): " logging_steps
-            echo -en $RESET_TEXT
-            logging_steps=${logging_steps:-2}
+            # Display the selected/configured parameters
+            echo -e "${GREEN_TEXT}  • max_steps: $max_steps${RESET_TEXT}"
+            echo -e "${GREEN_TEXT}  • num_generations: $num_generations${RESET_TEXT}"
+            echo -e "${GREEN_TEXT}  • per_device_train_batch_size: $batch_size${RESET_TEXT}"
+            echo -e "${GREEN_TEXT}  • gradient_accumulation_steps: $grad_accum${RESET_TEXT}"
+            echo -e "${GREEN_TEXT}  • gradient_checkpointing: $grad_check${RESET_TEXT}"
+            echo -e "${GREEN_TEXT}  • learning_rate: $learning_rate${RESET_TEXT}"
+            echo -e "${GREEN_TEXT}  • logging_steps: $logging_steps${RESET_TEXT}"
+            echo -e "${GREEN_TEXT}  • save_steps: $save_steps${RESET_TEXT}"
+            echo -e "${GREEN_TEXT}  • warmup_ratio: $warmup_ratio${RESET_TEXT}"
+            echo -e "${GREEN_TEXT}  • beta: $beta${RESET_TEXT}"
+            echo -e "${GREEN_TEXT}  • max_prompt_length: $max_prompt_length${RESET_TEXT}"
+            echo -e "${GREEN_TEXT}  • max_completion_length: $max_completion_length${RESET_TEXT}"
             
-            # save_steps
-            echo -en $GREEN_TEXT
-            read -p ">> save_steps (default: 25): " save_steps
-            echo -en $RESET_TEXT
-            save_steps=${save_steps:-25}
-            
-            echo_green ">> Parameters will be updated in the selected configuration file."
+            echo -e "\n${BLUE_TEXT}Parameters will be updated in the selected configuration file.${RESET_TEXT}"
             break ;;
         [Nn]*)  
-            echo_green ">> Using default training parameters"
+            echo -e "\n${GREEN_TEXT}>> Using default training parameters${RESET_TEXT}"
             break ;;
-        *)  echo ">>> Please answer yes or no." ;;
+        *)  echo -e "${RED_TEXT}>>> Please answer yes or no.${RESET_TEXT}" ;;
     esac
 done
 
@@ -554,6 +652,10 @@ update_yaml_config() {
     echo "learning_rate matches: $(grep -c "^[[:space:]]*learning_rate:" "$config_file")"
     echo "logging_steps matches: $(grep -c "^[[:space:]]*logging_steps:" "$config_file")"
     echo "save_steps matches: $(grep -c "^[[:space:]]*save_steps:" "$config_file")"
+    echo "warmup_ratio matches: $(grep -c "^[[:space:]]*warmup_ratio:" "$config_file")"
+    echo "beta matches: $(grep -c "^[[:space:]]*beta:" "$config_file")"
+    echo "max_prompt_length matches: $(grep -c "^[[:space:]]*max_prompt_length:" "$config_file")"
+    echo "max_completion_length matches: $(grep -c "^[[:space:]]*max_completion_length:" "$config_file")"
     
     # Show current parameter values
     echo_green ">> CURRENT PARAMETER VALUES:"
@@ -565,6 +667,10 @@ update_yaml_config() {
     grep "^[[:space:]]*learning_rate:" "$config_file" || echo "learning_rate not found"
     grep "^[[:space:]]*logging_steps:" "$config_file" || echo "logging_steps not found"
     grep "^[[:space:]]*save_steps:" "$config_file" || echo "save_steps not found"
+    grep "^[[:space:]]*warmup_ratio:" "$config_file" || echo "warmup_ratio not found"
+    grep "^[[:space:]]*beta:" "$config_file" || echo "beta not found"
+    grep "^[[:space:]]*max_prompt_length:" "$config_file" || echo "max_prompt_length not found"
+    grep "^[[:space:]]*max_completion_length:" "$config_file" || echo "max_completion_length not found"
     
     echo_green ">> NEW PARAMETER VALUES TO SET:"
     echo "max_steps: $max_steps"
@@ -575,6 +681,10 @@ update_yaml_config() {
     echo "learning_rate: $learning_rate"
     echo "logging_steps: $logging_steps"
     echo "save_steps: $save_steps"
+    echo "warmup_ratio: $warmup_ratio"
+    echo "beta: $beta"
+    echo "max_prompt_length: $max_prompt_length"
+    echo "max_completion_length: $max_completion_length"
     
     # Process the file line by line with detailed logging
     local changes_made=0
@@ -616,6 +726,22 @@ update_yaml_config() {
             echo "save_steps: $save_steps" >> "$temp_file"
             echo "Line $line_number: Changed [${line}] to [save_steps: $save_steps]"
             ((changes_made++))
+        elif [[ $line =~ ^[[:space:]]*warmup_ratio:[[:space:]]* ]]; then
+            echo "warmup_ratio: $warmup_ratio" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [warmup_ratio: $warmup_ratio]"
+            ((changes_made++))
+        elif [[ $line =~ ^[[:space:]]*beta:[[:space:]]* ]]; then
+            echo "beta: $beta" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [beta: $beta]"
+            ((changes_made++))
+        elif [[ $line =~ ^[[:space:]]*max_prompt_length:[[:space:]]* ]]; then
+            echo "max_prompt_length: $max_prompt_length" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [max_prompt_length: $max_prompt_length]"
+            ((changes_made++))
+        elif [[ $line =~ ^[[:space:]]*max_completion_length:[[:space:]]* ]]; then
+            echo "max_completion_length: $max_completion_length" >> "$temp_file"
+            echo "Line $line_number: Changed [${line}] to [max_completion_length: $max_completion_length]"
+            ((changes_made++))
         else
             # Keep unchanged lines
             echo "$line" >> "$temp_file"
@@ -632,7 +758,7 @@ update_yaml_config() {
     
     echo_green ">> Successfully created backup: ${config_file}.bak"
     
-    # Replace the original file with our modified version
+    # Replace the original file with modified version
     if ! mv "$temp_file" "$config_file"; then
         echo_green "ERROR: Could not replace original file with modified version"
         echo_green "Temp file exists: $([ -f "$temp_file" ] && echo "Yes" || echo "No")"
@@ -659,6 +785,10 @@ update_yaml_config() {
     grep "^[[:space:]]*learning_rate:" "$config_file" || echo "WARNING: learning_rate not found in final file!"
     grep "^[[:space:]]*logging_steps:" "$config_file" || echo "WARNING: logging_steps not found in final file!"
     grep "^[[:space:]]*save_steps:" "$config_file" || echo "WARNING: save_steps not found in final file!"
+    grep "^[[:space:]]*warmup_ratio:" "$config_file" || echo "WARNING: warmup_ratio not found in final file!"
+    grep "^[[:space:]]*beta:" "$config_file" || echo "WARNING: beta not found in final file!"
+    grep "^[[:space:]]*max_prompt_length:" "$config_file" || echo "WARNING: max_prompt_length not found in final file!"
+    grep "^[[:space:]]*max_completion_length:" "$config_file" || echo "WARNING: max_completion_length not found in final file!"
     
     echo_green ">> Config file update process completed"
     echo_green "========================= END DEBUGGING ========================="
