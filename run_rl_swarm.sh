@@ -349,6 +349,329 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
     # Set default server URL
     SERVER_URL="http://localhost:3000"
     
+    # Function to check if a URL is accessible
+    check_url() {
+        local url=$1
+        local max_retries=3
+        local retry=0
+        
+        while [ $retry -lt $max_retries ]; do
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null)
+            if [ "$http_code" = "200" ] || [ "$http_code" = "404" ] || [ "$http_code" = "301" ] || [ "$http_code" = "302" ]; then
+                return 0
+            fi
+            retry=$((retry + 1))
+            sleep 2
+        done
+        return 1
+    }
+
+    # Function to install and setup Localtunnel
+    try_localtunnel() {
+        echo_green ">> Setting up Localtunnel..."
+        # Check if localtunnel is installed
+        if ! command -v lt &> /dev/null; then
+            echo ">> Localtunnel not found. Installing..."
+            npm install -g localtunnel
+            if [ $? -ne 0 ]; then
+                echo ">> Failed to install localtunnel."
+                return 1
+            fi
+        fi
+        
+        # Get the local IP address to use as password
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS
+            LOCAL_IP=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+        else
+            # Linux
+            LOCAL_IP=$(hostname -I | awk '{print $1}')
+        fi
+        
+        # Start localtunnel in background
+        echo ">> Starting Localtunnel..."
+        lt --port 3000 > "$ROOT/logs/localtunnel.log" 2>&1 &
+        TUNNEL_PID=$!
+        
+        # Wait for tunnel to start with proper timeout
+        for i in {1..15}; do
+            if [ ! -f "$ROOT/logs/localtunnel.log" ]; then
+                sleep 1
+                continue
+            fi
+            
+            TUNNEL_URL=$(grep -o 'https://.*\.loca\.lt' "$ROOT/logs/localtunnel.log" | head -1)
+            if [ -n "$TUNNEL_URL" ]; then
+                echo_green ">> Localtunnel created: $TUNNEL_URL"
+                echo_green ">> IMPORTANT: If prompted for a password, use your local IP address: $LOCAL_IP"
+                SERVER_URL="$TUNNEL_URL"
+                export TUNNEL_TYPE="localtunnel"
+                return 0
+            fi
+            sleep 1
+        done
+        
+        # If we get here, localtunnel failed
+        echo ">> Failed to create Localtunnel."
+        if ps -p $TUNNEL_PID > /dev/null 2>&1; then
+            kill $TUNNEL_PID 2>/dev/null || true
+        fi
+        return 1
+    }
+
+    # Function to install and setup Cloudflared
+    try_cloudflared() {
+        echo_green ">> Setting up Cloudflare Tunnel..."
+        # Check if cloudflared is installed
+        if ! command -v cloudflared &> /dev/null; then
+            echo ">> Cloudflared not found. Installing..."
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                # macOS
+                brew install cloudflare/cloudflare/cloudflared
+            elif grep -qi "ubuntu\|debian" /etc/os-release 2> /dev/null; then
+                # Ubuntu/Debian
+                curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+                if [ $? -ne 0 ]; then
+                    echo ">> Failed to download cloudflared."
+                    return 1
+                fi
+                sudo dpkg -i cloudflared.deb
+                if [ $? -ne 0 ]; then
+                    echo ">> Failed to install cloudflared."
+                    rm cloudflared.deb 2>/dev/null || true
+                    return 1
+                fi
+                rm cloudflared.deb
+            else
+                echo ">> Automatic installation not supported for your OS."
+                return 1
+            fi
+        fi
+        
+        # Start cloudflared tunnel in background
+        echo ">> Starting Cloudflare tunnel..."
+        cloudflared tunnel --url http://localhost:3000 > "$ROOT/logs/cloudflared.log" 2>&1 &
+        TUNNEL_PID=$!
+        
+        # Wait for tunnel to start with proper timeout
+        for i in {1..15}; do
+            if [ ! -f "$ROOT/logs/cloudflared.log" ]; then
+                sleep 1
+                continue
+            fi
+            
+            TUNNEL_URL=$(grep -o 'https://.*\.trycloudflare\.com' "$ROOT/logs/cloudflared.log" | head -1)
+            if [ -n "$TUNNEL_URL" ]; then
+                # Verify the URL is accessible
+                echo ">> Checking if cloudflared URL is working..."
+                if check_url "$TUNNEL_URL"; then
+                    echo_green ">> Cloudflare Tunnel created and verified: $TUNNEL_URL"
+                    SERVER_URL="$TUNNEL_URL"
+                    export TUNNEL_TYPE="cloudflared"
+                    return 0
+                else
+                    echo ">> Cloudflared URL is not accessible."
+                    break
+                fi
+            fi
+            sleep 1
+        done
+        
+        # If we get here, cloudflared failed
+        echo ">> Failed to create Cloudflare Tunnel."
+        if ps -p $TUNNEL_PID > /dev/null 2>&1; then
+            kill $TUNNEL_PID 2>/dev/null || true
+        fi
+        return 1
+    }
+
+    # Function to get ngrok URL using different methods
+    get_ngrok_url() {
+        # Method 1: Parse JSON logs
+        local url=$(grep -o '"url":"https://[^"]*' "$ROOT/logs/ngrok.log" 2>/dev/null | head -1 | cut -d'"' -f4)
+        if [ -n "$url" ]; then
+            echo "$url"
+            return
+        fi
+        
+        # Method 2: Query ngrok API
+        for try_port in $(seq 4040 4045); do
+            local response=$(curl -s "http://localhost:$try_port/api/tunnels" 2>/dev/null)
+            if [ -n "$response" ]; then
+                url=$(echo "$response" | grep -o '"public_url":"https://[^"]*' | head -1 | cut -d'"' -f4)
+                if [ -n "$url" ]; then
+                    echo "$url"
+                    return
+                fi
+            fi
+        done
+        
+        # Method 3: Parse text logs
+        url=$(grep -o "Forwarding.*https://[^ ]*" "$ROOT/logs/ngrok.log" 2>/dev/null | grep -o "https://[^ ]*" | head -1)
+        echo "$url"
+    }
+
+    # Function to install and setup Ngrok
+    try_ngrok() {
+        echo_green ">> Setting up Ngrok tunnel..."
+        # Check if ngrok is installed
+        if ! command -v ngrok &> /dev/null; then
+            echo ">> Ngrok not found. Installing..."
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                # macOS
+                brew install ngrok/ngrok/ngrok
+            else
+                # Download and install for Linux
+                curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+                echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+                sudo apt update && sudo apt install ngrok
+            fi
+            
+            if [ $? -ne 0 ]; then
+                echo ">> Failed to install ngrok."
+                return 1
+            fi
+        fi
+        
+        # Get auth token if needed
+        if ! ngrok config check > /dev/null 2>&1; then
+            echo_green ">> Ngrok needs authentication."
+            echo "1. Sign up or log in at https://dashboard.ngrok.com"
+            echo "2. Go to 'Your Authtoken' section: https://dashboard.ngrok.com/get-started/your-authtoken"
+            echo "3. Copy that auth token and paste it below"
+            read -p ">> Enter your ngrok authtoken: " NGROK_TOKEN
+            
+            if [ -z "$NGROK_TOKEN" ]; then
+                echo ">> No token provided."
+                return 1
+            fi
+            
+            ngrok authtoken "$NGROK_TOKEN" > /dev/null 2>&1
+            if [ $? -ne 0 ]; then
+                echo ">> Authentication failed."
+                return 1
+            fi
+        fi
+        
+        # Kill any existing ngrok processes
+        pkill -f ngrok > /dev/null 2>&1 || true
+        sleep 2
+        
+        # Start ngrok with JSON logging
+        echo ">> Starting Ngrok with JSON logging..."
+        ngrok http 3000 --log=stdout --log-format=json > "$ROOT/logs/ngrok.log" 2>&1 &
+        TUNNEL_PID=$!
+        
+        # Wait for tunnel to start with proper timeout
+        for i in {1..15}; do
+            NGROK_URL=$(get_ngrok_url)
+            if [ -n "$NGROK_URL" ]; then
+                # Verify the URL is accessible
+                echo ">> Checking if ngrok URL is working..."
+                if check_url "$NGROK_URL"; then
+                    echo_green ">> Ngrok Tunnel created and verified: $NGROK_URL"
+                    SERVER_URL="$NGROK_URL"
+                    export TUNNEL_TYPE="ngrok"
+                    return 0
+                else
+                    echo ">> Ngrok URL is not accessible."
+                    break
+                fi
+            fi
+            sleep 1
+        done
+        
+        # If we get here, ngrok failed with JSON logging, try standard logging
+        if ps -p $TUNNEL_PID > /dev/null 2>&1; then
+            kill $TUNNEL_PID 2>/dev/null || true
+        fi
+        sleep 2
+        
+        echo ">> Starting Ngrok with standard logging..."
+        ngrok http 3000 > "$ROOT/logs/ngrok.log" 2>&1 &
+        TUNNEL_PID=$!
+        
+        # Wait for tunnel to start with proper timeout
+        for i in {1..15}; do
+            NGROK_URL=$(get_ngrok_url)
+            if [ -n "$NGROK_URL" ]; then
+                # Verify the URL is accessible
+                echo ">> Checking if ngrok URL is working..."
+                if check_url "$NGROK_URL"; then
+                    echo_green ">> Ngrok Tunnel created and verified: $NGROK_URL"
+                    SERVER_URL="$NGROK_URL"
+                    export TUNNEL_TYPE="ngrok"
+                    return 0
+                else
+                    echo ">> Ngrok URL is not accessible."
+                    break
+                fi
+            fi
+            sleep 1
+        done
+        
+        # If we get here, ngrok failed
+        echo ">> Failed to create Ngrok Tunnel."
+        if ps -p $TUNNEL_PID > /dev/null 2>&1; then
+            kill $TUNNEL_PID 2>/dev/null || true
+        fi
+        return 1
+    }
+
+    # Function to try all tunnel methods in order
+    setup_tunnel() {
+        local tunnel_choice=$1
+        
+        case $tunnel_choice in
+            1)  
+                echo_green ">> Using localhost only."
+                SERVER_URL="http://localhost:3000"
+                return 0
+                ;;
+            2)  
+                if try_cloudflared; then
+                    return 0
+                fi
+                echo ">> Cloudflare Tunnel failed. Trying alternative methods..."
+                ;;
+            3)  
+                if try_ngrok; then
+                    return 0
+                fi
+                echo ">> Ngrok Tunnel failed. Trying alternative methods..."
+                ;;
+            4)  
+                if try_localtunnel; then
+                    return 0
+                fi
+                echo ">> Localtunnel failed. Trying alternative methods..."
+                ;;
+        esac
+        
+        # If the chosen method failed, try others in sequence
+        if [ "$tunnel_choice" != "1" ]; then
+            echo ">> Trying Cloudflare Tunnel as fallback..."
+            if try_cloudflared; then
+                return 0
+            fi
+            
+            echo ">> Trying Ngrok as fallback..."
+            if try_ngrok; then
+                return 0
+            fi
+            
+            echo ">> Trying Localtunnel as fallback..."
+            if try_localtunnel; then
+                return 0
+            fi
+            
+            echo_green ">> All tunnel methods failed. Falling back to localhost."
+            SERVER_URL="http://localhost:3000"
+        fi
+        
+        return 0
+    }
+
     # Ask user if they want to use a tunneling service
     while true; do
         echo -en $GREEN_TEXT
@@ -362,118 +685,12 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
         tunnel_choice=${tunnel_choice:-1}  # Default to "1" if the user presses Enter
         
         case $tunnel_choice in
-            1)  
-                echo_green ">> Using localhost only." 
-                break 
+            1|2|3|4)
+                setup_tunnel $tunnel_choice
+                break
                 ;;
-            2)  
-                echo_green ">> Setting up Cloudflare Tunnel..."
-                # Check if cloudflared is installed
-                if ! command -v cloudflared &> /dev/null; then
-                    echo ">> Cloudflared not found. Installing..."
-                    if [[ "$OSTYPE" == "darwin"* ]]; then
-                        # macOS
-                        brew install cloudflare/cloudflare/cloudflared
-                    elif grep -qi "ubuntu\|debian" /etc/os-release 2> /dev/null; then
-                        # Ubuntu/Debian
-                        curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-                        sudo dpkg -i cloudflared.deb
-                        rm cloudflared.deb
-                    else
-                        echo ">> Automatic installation not supported for your OS."
-                        echo ">> Please install cloudflared manually: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation"
-                        echo ">> Using localhost instead."
-                        break
-                    fi
-                fi
-                
-                # Start cloudflared tunnel in background
-                echo ">> Starting Cloudflare tunnel..."
-                cloudflared tunnel --url http://localhost:3000 > "$ROOT/logs/cloudflared.log" 2>&1 &
-                TUNNEL_PID=$!
-                
-                # Extract the tunnel URL from logs
-                sleep 5
-                TUNNEL_URL=$(grep -o 'https://.*\.trycloudflare\.com' "$ROOT/logs/cloudflared.log" | head -1)
-                
-                if [ -n "$TUNNEL_URL" ]; then
-                    echo_green ">> Cloudflare Tunnel created: $TUNNEL_URL"
-                    SERVER_URL="$TUNNEL_URL"
-                else
-                    echo ">> Failed to create Cloudflare Tunnel. Using localhost instead."
-                fi
-                break 
-                ;;
-            3)  
-                echo_green ">> Setting up Ngrok tunnel..."
-                # Check if ngrok is installed
-                if ! command -v ngrok &> /dev/null; then
-                    echo ">> Ngrok not found. Installing..."
-                    if [[ "$OSTYPE" == "darwin"* ]]; then
-                        # macOS
-                        brew install ngrok/ngrok/ngrok
-                    else
-                        # Download and install for Linux
-                        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
-                        echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-                        sudo apt update && sudo apt install ngrok
-                    fi
-                fi
-                
-                # Start ngrok tunnel in background
-                echo ">> Starting Ngrok tunnel..."
-                ngrok http 3000 > "$ROOT/logs/ngrok.log" 2>&1 &
-                TUNNEL_PID=$!
-                
-                # Extract the tunnel URL from ngrok API
-                sleep 5
-                TUNNEL_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | grep -o '"public_url":"https://[^"]*' | sed 's/"public_url":"//g')
-                
-                if [ -n "$TUNNEL_URL" ]; then
-                    echo_green ">> Ngrok Tunnel created: $TUNNEL_URL"
-                    SERVER_URL="$TUNNEL_URL"
-                else
-                    echo ">> Failed to create Ngrok Tunnel. Using localhost instead."
-                fi
-                break 
-                ;;
-            4)  
-                echo_green ">> Setting up Localtunnel..."
-                # Check if localtunnel is installed
-                if ! command -v lt &> /dev/null; then
-                    echo ">> Localtunnel not found. Installing..."
-                    npm install -g localtunnel
-                fi
-                
-                # Get the local IP address to use as password
-                if [[ "$OSTYPE" == "darwin"* ]]; then
-                    # macOS
-                    LOCAL_IP=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
-                else
-                    # Linux
-                    LOCAL_IP=$(hostname -I | awk '{print $1}')
-                fi
-                
-                # Start localtunnel in background
-                echo ">> Starting Localtunnel..."
-                lt --port 3000 > "$ROOT/logs/localtunnel.log" 2>&1 &
-                TUNNEL_PID=$!
-                
-                # Extract the tunnel URL from logs
-                sleep 5
-                TUNNEL_URL=$(grep -o 'https://.*\.loca\.lt' "$ROOT/logs/localtunnel.log" | head -1)
-                
-                if [ -n "$TUNNEL_URL" ]; then
-                    echo_green ">> Localtunnel created: $TUNNEL_URL"
-                    echo_green ">> IMPORTANT: If prompted for a password, use your local IP address: $LOCAL_IP"
-                    SERVER_URL="$TUNNEL_URL"
-                else
-                    echo ">> Failed to create Localtunnel. Using localhost instead."
-                fi
-                break 
-                ;;
-            *)  
-                echo ">> Please enter a valid option (1-4)." 
+            *)
+                echo ">> Please enter a valid option (1-4)."
                 ;;
         esac
     done
