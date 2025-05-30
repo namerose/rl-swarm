@@ -142,9 +142,9 @@ def estimate_peak_mem_percentage(
 
     # Buffer for peak usage (reduced to lower memory consumption).
     if model_param_b > 32:
-        estimate *= 1.15
+        estimate *= 1.25
     else:
-        estimate *= 1.35
+        estimate *= 1.5
 
     # Find percentage of available memory.
     vllm_device = grpo_config.vllm_device
@@ -167,4 +167,4 @@ def estimate_peak_mem_percentage(
             pass
 
     percentage = estimate / free
-    return min(max(0.05, percentage), 0.84)
+    return min(max(0.05, percentage), 0.88)
