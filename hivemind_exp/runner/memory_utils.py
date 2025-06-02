@@ -167,4 +167,4 @@ def estimate_peak_mem_percentage(
             pass
 
     percentage = estimate / free
-    return min(max(0.05, percentage), 0.88)
+    return min(max(0.05, percentage), 0.85)
